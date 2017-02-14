@@ -1,0 +1,273 @@
+#!/bin/bash
+
+file=./wpdev.conf
+time=`date`
+
+################
+### defaults ###
+################
+s=false
+f=false
+n=false
+domain=localhost
+password=webapp
+mysql_root_password=mariadb
+mysql_db=wordpress
+mysql_user=wpuser
+mysql_password=wordpress
+protocol=http
+
+#################
+### functions ###
+#################
+
+function check() {
+msg="Error: Bad or empty argument value."
+if [[ $1 == "-"* ]]; then
+  echo $msg
+  exit 5
+fi
+if [[ $1 == "--"* ]]; then
+  echo $msg
+  exit 5
+fi
+[ -z "$1" ] && echo $msg && exit 5
+}
+
+function run_mysql {
+docker run -d --name=mysql -p 3306:3306 -p 2223:22 -p 9003:9001  -e PASSWORD=$password -e SHELLINABOX_PORT=9103 -p 9103:4200 -e MYSQL_ROOT_PASSWORD=$mysql_root_password -e MYSQL_DATABASE1=$mysql_db -e MYSQL_USER1=$mysql_user -e MYSQL_PASSWORD1=$mysql_password -v `pwd`/db:/var/lib/mysql orboan/dcsss-mariadb
+}
+
+function run_wpdev {
+docker run -d --name wpdev --link mysql:mysql -p 80:80 -p 2222:22 -p 9002:9001 -e PASSWORD=$password -e SHELLINABOX_PORT=9102 -p 9102:4200 -e MYSQL_HOST=mysql -e MYSQL_DATABASE=$mysql_db -e MYSQL_USER=$mysql_user -e MYSQL_PASSWORD=$mysql_password -e WP_URL="$protocol://$domain" -v `pwd`:/data orboan/dcsss-httpd-wpdev
+}
+
+function run_cloud9 {
+docker run -d --name cloud9 -p 81:80 -v `pwd`/www/html:/workspace/ kdelfour/cloud9-docker
+}
+
+function download_wp {
+wget https://wordpress.org/latest.tar.gz -O ./latest.tar.gz
+}
+
+function init_wpconfig {
+rm ./www/html/wp-config*.php
+mv ./wp-config.php ./www/html
+}
+
+function init_wp {
+docker cp wpdev:/var/www/html/wp-config.php ./
+tar -xzvf latest.tar.gz > /dev/null
+if [[ -d "./www/html/wp-content" ]]; then
+cp -r ./www/html/wp-content ./
+fi
+rm -rf ./www/html/*
+cp -r wordpress/* ./www/html/
+rm -rf wordpress
+if [[ -d "./wp-content" ]]; then
+rm -rf ./www/html/wp-content
+cp -r ./wp-content ./www/html/
+rm -rf ./wp-content
+fi
+init_wpconfig
+}
+
+function printvar(){
+echo "#########################"
+echo "### Variables set to: ###"
+echo "#########################"
+echo "time:$time" > $file
+echo "action:$action" >> $file
+echo "domain:$domain" >> $file
+echo "password:$password" >> $file
+echo "mysql-root-password:$mysql_root_password" >> $file
+echo "mysql_db:$mysql_db" >> $file
+echo "mysql_user:$mysql_user" >> $file
+echo "mysql_password:$mysql_password" >> $file
+echo "secure:$s" >> $file
+echo "force-download:$f" >> $file
+cat $file
+}
+
+function start() {
+docker start mysql
+docker start wpdev
+docker start cloud9
+sed -i "1s/.*/time:$time/" $file
+sed -i "2s/.*/action:$action/" $file
+}
+
+function stop(){
+docker stop cloud9
+docker stop wpdev
+docker stop mysql
+sed -i "1s/.*/time:$time/" $file
+sed -i "2s/.*/action:$action/" $file
+}
+
+function remove(){
+docker rm -f cloud9
+docker rm -f wpdev
+docker rm -f mysql
+sed -i "1s/.*/time:$time/" $file
+sed -i "2s/.*/action:$action/" $file
+}
+
+
+################################
+### Parsing script arguments ###
+################################
+
+#getopt is used for handling sript arguments
+#getopt is so old that is 99% for sure it is included in your linux
+#just in case:
+#`getopt --test` to check if getopt is available on this system
+
+getopt --test > /dev/null
+if [[ $? -ne 4 ]]; then
+    echo "I’m sorry, `getopt --test` failed in this environment."
+    exit 1
+fi
+### Options:
+## -d or --domain: domain name used for this wordpress. 
+#  This is the value assigned to $WP_SITEURL and $WP_HOME in wp-config.php 
+## -p or --password: os password for user named www
+#  Use these credentials to login into the container with ssh
+#  Use these credentials to authenticate against the supervisor web ui
+## -r or --mysql-root-password: password for the root user of the mariadb rdbms
+## -b or --mysql-db: to name the wordpress database
+## -u or --mysql-user: to name the mariadb user with privileges on to the wordpress database
+## -w or --mysql-password: to set the password for the mariadb user specified with -u
+## -f or --force-core-update: force the download of the latest wordpress and update the core
+#  (even if it is already downloaded)
+## -s or --secure: to set the https protocol (by default it is http)
+SHORT=d:p:r:b:u:w:fsn
+LONG=domain:,password:,mysql-root-password:,mysql-db:,mysql-user:,mysql-password:,force-core-update,secure,clean-database
+
+# -temporarily store output to be able to check for errors
+# -activate advanced mode getopt quoting e.g. via “--options”
+# -pass arguments only via   -- "$@"   to separate them correctly
+PARSED=`getopt --options $SHORT --longoptions $LONG --name "$0" -- "$@"`
+if [[ $? -ne 0 ]]; then
+    # e.g. $? == 1
+    # then getopt has complained about wrong arguments to stdout
+    exit 2
+fi
+# use eval with "$PARSED" to properly handle the quoting
+eval set -- "$PARSED"
+
+# now enjoy the options in order and nicely split until we see --
+while true; do
+    case "$1" in
+        -d|--domain)            
+	    domain="$2"
+	    check $domain
+            shift 2
+            ;;
+        -p|--password)
+	    password="$2"
+            check $password
+            shift 2
+	    ;;
+  	-r|--mysql-root-password)
+	    mysql_root_password="$2"
+            check $mysql_root_password
+	    shift 2
+	    ;;
+	-b|--mysql-db)
+	    mysql_db="$2"
+	    check $mysql_db
+	    shift 2
+	    ;;
+	-u|--mysql-user)
+	    mysql_user="$2"
+	    check $mysql_user
+	    shift 2
+	    ;;
+	-w|--mysql-password)
+	    mysql_password="$2"
+	    check $mysql_password
+	    shift 2
+	    ;;
+	-s|--secure)
+	    s=true
+	    shift
+	    ;;		
+	-f|--force)
+            f=true
+            shift
+            ;;
+        -n|--clean-database)
+            n=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Programming error"
+            exit 3
+            ;;
+    esac
+done
+
+# handle non-option arguments
+if [[ $# -ne 1 ]]; then
+    echo "$0: Error in passed command arguments"
+    exit 4
+fi
+
+action=$1
+
+if [[ $action == "run" ]]; then
+if [[ "$n" == "true" ]]; then
+sudo rm -rf ./db
+fi
+run_mysql
+run_wpdev
+run_cloud9
+if [ ! -f ./latest.tar.gz ]; then
+    echo "Downloading latest wordpress..."
+    download_wp
+    f=false
+fi
+if [[ -f ./latest.tar.gz && "$f" == "true" ]]; then
+    echo "Downloading latest wordpress..."
+    download_wp
+fi
+if [ ! -f "www/html/wp-config.php" ]; then
+  init_wp
+  f=false
+fi
+if [[ -f "www/html/wp-config.php" && "$f" == "true" ]]; then
+  init_wp
+fi
+printvar
+exit 0
+fi
+
+if [[ $action == "start" ]]; then
+start
+exit 0
+fi
+
+if [[ $action == "stop" ]]; then
+stop
+exit 0
+fi
+
+if [[ $action == "restart" ]]; then
+stop
+start
+exit 0
+fi
+
+if [[ $action == "rm" ]]; then
+remove
+exit 0
+fi
+
+echo "Error: Action is incorrect."
+exit 6
+
