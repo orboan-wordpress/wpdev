@@ -1,5 +1,14 @@
 #!/bin/bash
 
+### Script to automatically create an ubiquitous Wordpress development environment
+### It uses next docker containers, thus it only works if your system has docker installed
+### orboan/dcsss-mariadb
+### orboan/dcsss-httpd-wpdev
+### kdelfour/cloud9-docker
+
+# Autor: Oriol Boix Anfosso <dev@orboan.com>
+# Licensed under GPLv3
+
 file=./wpdev.conf
 time=`date`
 
