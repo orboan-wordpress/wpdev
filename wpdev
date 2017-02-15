@@ -151,6 +151,7 @@ fi
 ## -f or --force-core-update: force the download of the latest wordpress and update the core
 #  (even if it is already downloaded)
 ## -s or --secure: to set the https protocol (by default it is http)
+## -n or --clean-database: to reset the mysql database. All db changes are lost, so be carefull
 SHORT=d:p:r:b:u:w:fsn
 LONG=domain:,password:,mysql-root-password:,mysql-db:,mysql-user:,mysql-password:,force-core-update,secure,clean-database
 
