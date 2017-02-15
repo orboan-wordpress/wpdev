@@ -8,6 +8,7 @@
 
 # Autor: Oriol Boix Anfosso <dev@orboan.com>
 # Licensed under GPLv3
+# https://github.com/orboan/wpdev
 
 file=./wpdev.conf
 time=`date`
