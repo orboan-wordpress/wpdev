@@ -363,9 +363,9 @@ if [[ "$n" == "true" ]]; then
 sudo rm -rf ./db
 fi
 create_network
-run_mysql
-run_wpdev
-run_cloud9
+run_mysql 2>/dev/null || (docker rm -f $mysql_host && run_mysql)
+run_wpdev 2>/dev/null || (docker rm -f wpdev && run_wpdev)
+run_cloud9 2>/dev/null || (docker rm -f cloud9 && run_cloud9)
 if [ ! -f ./latest.tar.gz ]; then
     echo "Downloading latest wordpress..."
     download_wp
