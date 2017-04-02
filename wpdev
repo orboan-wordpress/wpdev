@@ -10,6 +10,18 @@
 # Licensed under GPLv3
 # https://github.com/orboan/wpdev
 
+#set -e
+
+if [[ "$PWD" == "$HOME" ]]; then
+echo
+echo "Please run this script from within a dedicated subdirectory of $HOME directory."
+echo
+exit 1
+fi
+
+trap "exit 1" TERM
+export TOP_PID=$$
+
 file=./wpdev.conf
 time=`date`
 
@@ -25,7 +37,18 @@ mysql_root_password=mariadb
 mysql_db=wordpress
 mysql_user=wpuser
 mysql_password=wordpress
+mysql_host=mysql_wp
 protocol=http
+wp_port=82
+wp_ssh_port=2222
+wp_supervisor_port=9002
+wp_shellinabox_port=9102
+db_port=3306
+db_ssh_port=2223
+db_supervisor_port=9003
+db_shellinabox_port=9103
+c9_port=81
+
 
 #################
 ### functions ###
@@ -41,19 +64,50 @@ if [[ $1 == "--"* ]]; then
   echo $msg
   exit 5
 fi
-[ -z "$1" ] && echo $msg && exit 5
+}
+
+function error_and_exit {
+echo 
+echo 
+echo "Error from line $1. Cleaning and exiting..."
+echo
+echo
+
+if [ -f ./latest.tar.gz ]; then
+mv ./latest.tar.gz ../
+fi
+
+docker rm -f $(docker ps -aq) &> /dev/null
+
+if [[ "$PWD" != "$HOME" ]]; then
+if [ "${PWD##/home/}" != "${PWD}" ]; then
+sudo rm -rf *
+fi
+fi
+
+if [ -f ../latest.tar.gz ]; then
+mv ../latest.tar.gz ./
+fi
+
+kill -s TERM $TOP_PID
+}
+
+trap 'error_and_exit $LINENO' ERR
+
+function create_network {
+docker network create iawnet &>/dev/null || echo "docker network iawnet already exists"
 }
 
 function run_mysql {
-docker run -d --name=mysql -p 3306:3306 -p 2223:22 -p 9003:9001  -e PASSWORD=$password -e SHELLINABOX_PORT=9103 -p 9103:4200 -e MYSQL_ROOT_PASSWORD=$mysql_root_password -e MYSQL_DATABASE1=$mysql_db -e MYSQL_USER1=$mysql_user -e MYSQL_PASSWORD1=$mysql_password -v `pwd`/db:/var/lib/mysql orboan/dcsss-mariadb
+docker run -d --name=$mysql_host --network="iawnet" -p $db_port:3306 -p $db_ssh_port:22 -p $db_supervisor_port:9001  -e PASSWORD=$password -e SHELLINABOX_PORT=$db_shellinabox_port -p $db_shellinabox_port:4200 -e MYSQL_ROOT_PASSWORD=$mysql_root_password -e MYSQL_DATABASE1=$mysql_db -e MYSQL_USER1=$mysql_user -e MYSQL_PASSWORD1=$mysql_password -v `pwd`/db:/var/lib/mysql orboan/dcsss-mariadb
 }
 
 function run_wpdev {
-docker run -d --name wpdev --link mysql:mysql -p 80:80 -p 2222:22 -p 9002:9001 -e PASSWORD=$password -e SHELLINABOX_PORT=9102 -p 9102:4200 -e MYSQL_HOST=mysql -e MYSQL_DATABASE=$mysql_db -e MYSQL_USER=$mysql_user -e MYSQL_PASSWORD=$mysql_password -e WP_URL="$protocol://$domain" -v `pwd`:/data orboan/dcsss-httpd-wpdev
+docker run -d --name wpdev  --network="iawnet" -p $wp_port:80 -p $wp_ssh_port:22 -p $wp_supervisor_port:9001 -e PASSWORD=$password -e SHELLINABOX_PORT=$wp_shellinabox_port -p $wp_shellinabox_port:4200 -e MYSQL_HOST=$mysql_host -e MYSQL_DATABASE=$mysql_db -e MYSQL_USER=$mysql_user -e MYSQL_PASSWORD=$mysql_password -e WP_URL="$protocol://$domain" -v `pwd`:/data orboan/dcsss-httpd-wpdev
 }
 
 function run_cloud9 {
-docker run -d --name cloud9 -p 81:80 -v `pwd`/www/html:/workspace/ kdelfour/cloud9-docker
+docker run -d --name cloud9  --network="iawnet" -p $c9_port:80 -v `pwd`/www/html:/workspace/ kdelfour/cloud9-docker
 }
 
 function download_wp {
@@ -90,10 +144,20 @@ echo "time:$time" > $file
 echo "action:$action" >> $file
 echo "domain:$domain" >> $file
 echo "password:$password" >> $file
+echo "mysql-host:$mysql_host" >> $file
 echo "mysql-root-password:$mysql_root_password" >> $file
-echo "mysql_db:$mysql_db" >> $file
-echo "mysql_user:$mysql_user" >> $file
-echo "mysql_password:$mysql_password" >> $file
+echo "mysql-db:$mysql_db" >> $file
+echo "mysql-user:$mysql_user" >> $file
+echo "mysql-password:$mysql_password" >> $file
+echo "wp-port:$wp_port" >> $file
+echo "wp-ssh-port:$wp_ssh_port" >> $file
+echo "wp-supervisor-port:$wp_supervisor_port" >> $file
+echo "wp-shellinabox-port:$wp_shellinabox_port" >> $file
+echo "db-port:$db_port" >> $file
+echo "db-ssh-port:$db_ssh_port" >> $file
+echo "db-supervisor-port:$db_supervisor_port" >> $file
+echo "db-shellinabox-port:$db_shellinabox_port" >> $file
+echo "c9-port:$c9_port" >> $file
 echo "secure:$s" >> $file
 echo "force-download:$f" >> $file
 cat $file
@@ -133,17 +197,20 @@ sed -i "2s/.*/action:$action/" $file
 #just in case:
 #`getopt --test` to check if getopt is available on this system
 
-getopt --test > /dev/null
-if [[ $? -ne 4 ]]; then
-    echo "I’m sorry, `getopt --test` failed in this environment."
-    exit 1
-fi
+#getopt --test #>/dev/null
+#err=$?
+#if [[ $err -ne 4 ]]; then
+#    echo "I’m sorry, `getopt --test` failed in this environment."
+#    exit 1
+#fi
+
 ### Options:
 ## -d or --domain: domain name used for this wordpress. 
 #  This is the value assigned to $WP_SITEURL and $WP_HOME in wp-config.php 
 ## -p or --password: os password for user named www
 #  Use these credentials to login into the container with ssh
 #  Use these credentials to authenticate against the supervisor web ui
+## -m or --mysql-host: host and container name for mariadb container
 ## -r or --mysql-root-password: password for the root user of the mariadb rdbms
 ## -b or --mysql-db: to name the wordpress database
 ## -u or --mysql-user: to name the mariadb user with privileges on to the wordpress database
@@ -152,8 +219,18 @@ fi
 #  (even if it is already downloaded)
 ## -s or --secure: to set the https protocol (by default it is http)
 ## -n or --clean-database: to reset the mysql database. All db changes are lost, so be carefull
-SHORT=d:p:r:b:u:w:fsn
-LONG=domain:,password:,mysql-root-password:,mysql-db:,mysql-user:,mysql-password:,force-core-update,secure,clean-database
+## --wp-port: port used to access wordpress by http
+## --wp-ssh-port: port used to ssh into wp container
+## --wp-supervisor-port: port used to access the supervisor web ui in the wp container
+## --wp-shellinabox-port: port used to access shellinabox (wp container)
+## --db-port: port used to access mariadb container (default is 3306)
+## --db-ssh-port: port used to ssh into mariadb container
+## --db-supervisor-port: port used to access the supervisor web ui in the mariadb container
+## --db-shellinabox-port: port used to access shellinabox (mariadb container)
+## --c9-port: port used to access Cloud9 container (http)
+
+SHORT=d:p:m:r:b:u:w:fsn
+LONG=domain:,password:,mysql-host:,mysql-root-password:,mysql-db:,mysql-user:,mysql-password:,force-core-update,secure,clean-database,wp-port:,wp-ssh-port:,wp-supervisor-port:,wp-shellinabox-port:,db-port:,db-ssh-port:,db-supervisor-port:,db-shellinabox-port:,c9-port:
 
 # -temporarily store output to be able to check for errors
 # -activate advanced mode getopt quoting e.g. via “--options”
@@ -164,9 +241,9 @@ if [[ $? -ne 0 ]]; then
     # then getopt has complained about wrong arguments to stdout
     exit 2
 fi
+
 # use eval with "$PARSED" to properly handle the quoting
 eval set -- "$PARSED"
-
 # now enjoy the options in order and nicely split until we see --
 while true; do
     case "$1" in
@@ -180,6 +257,11 @@ while true; do
             check $password
             shift 2
 	    ;;
+        -m|--mysql-host)
+	    mysql_host="$2"
+            check $mysql_host
+            shift 2
+            ;;
   	-r|--mysql-root-password)
 	    mysql_root_password="$2"
             check $mysql_root_password
@@ -200,6 +282,51 @@ while true; do
 	    check $mysql_password
 	    shift 2
 	    ;;
+        --wp-port)
+            wp_port="$2"
+            check $wp_port
+            shift 2
+            ;;
+        --wp-ssh-port)
+            wp_ssh_port="$2"
+            check $wp_ssh_port
+            shift 2
+            ;;
+        --wp-supervisor-port)
+            wp_supervisor_port="$2"
+            check $wp_supervisor_port
+            shift 2
+            ;;
+        --wp-shellinabox-port)
+            wp_shellinabox_port="$2"
+            check $wp_shellinabox_port
+            shift 2
+            ;;
+        --db-port)
+            bd_port="$2"
+            check $db_port
+            shift 2
+            ;;
+        --db-ssh-port)
+            db_ssh_port="$2"
+            check $db_ssh_port
+            shift 2
+            ;;
+        --db-supervisor-port)
+            db_supervisor_port="$2"
+            check $db_supervisor_port
+            shift 2
+            ;;
+        --db-shellinabox-port)
+            db_shellinabox_port="$2"
+            check $db_shellinabox_port
+            shift 2
+            ;;
+        --c9-port)
+            c9_port="$2"
+            check $c9_port
+            shift 2
+            ;;
 	-s|--secure)
 	    s=true
 	    shift
@@ -235,6 +362,7 @@ if [[ $action == "run" ]]; then
 if [[ "$n" == "true" ]]; then
 sudo rm -rf ./db
 fi
+create_network
 run_mysql
 run_wpdev
 run_cloud9
@@ -281,4 +409,5 @@ fi
 
 echo "Error: Action is incorrect."
 exit 6
+
 
